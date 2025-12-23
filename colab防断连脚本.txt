@@ -1,0 +1,25 @@
+function KeepAlive() {
+    console.log("保持活跃检测: " + new Date());
+    
+    // 定位连接按钮
+    // 注意：Colab 的 DOM 结构可能会更新，以下选择器覆盖了常见情况
+    let connectBtn = document.querySelector("colab-connect-button");
+    
+    if (connectBtn && connectBtn.shadowRoot) {
+        let actualBtn = connectBtn.shadowRoot.querySelector("#connect");
+        if (actualBtn) {
+            actualBtn.click();
+        } else {
+            connectBtn.click();
+        }
+    } else {
+        console.log("未找到连接按钮，尝试模拟页面点击...");
+        // 如果找不到特定按钮，点击 body 防止休眠
+        document.body.click();
+    }
+}
+
+// 每 60 秒 (60000 毫秒) 执行一次
+var keepAliveInterval = setInterval(KeepAlive, 60000);
+
+console.log("防断连脚本已启动！");
