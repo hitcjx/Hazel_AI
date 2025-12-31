@@ -5,6 +5,35 @@ from typing import Dict, TypedDict, Any
 import yaml
 
 # =============================================================================
+# API后端配置
+# =============================================================================
+class ModelBackend(Enum):
+    """模型后端类型"""
+    LOCAL = "local"      # 本地模型（transformers）
+    OPENAI = "openai"    # OpenAI格式API（包括兼容接口）
+
+class APIConfig:
+    """API配置 - 支持从环境变量读取"""
+
+    # Avatar模型配置（14B 温柔对话）
+    AVATAR_BACKEND = ModelBackend.LOCAL  # 默认本地
+    AVATAR_API_KEY = os.getenv("AVATAR_API_KEY", "")
+    AVATAR_API_MODEL = os.getenv("AVATAR_API_MODEL", "gpt-4")
+    AVATAR_API_BASE_URL = os.getenv("AVATAR_API_BASE_URL", "")  # 自定义endpoint
+
+    # Brain模型配置（8B 逻辑判断）
+    BRAIN_BACKEND = ModelBackend.LOCAL  # 默认本地
+    BRAIN_API_KEY = os.getenv("BRAIN_API_KEY", "")
+    BRAIN_API_MODEL = os.getenv("BRAIN_API_MODEL", "gpt-3.5-turbo")
+    BRAIN_API_BASE_URL = os.getenv("BRAIN_API_BASE_URL", "")
+
+    # Guard模型配置（1.7B 快速检查 - 建议保持本地）
+    GUARD_BACKEND = ModelBackend.LOCAL
+    GUARD_API_KEY = os.getenv("GUARD_API_KEY", "")
+    GUARD_API_MODEL = os.getenv("GUARD_API_MODEL", "")
+    GUARD_API_BASE_URL = os.getenv("GUARD_API_BASE_URL", "")
+
+# =============================================================================
 # 路径配置
 # =============================================================================
 BASE_DIR = Path(__file__).parent.absolute()

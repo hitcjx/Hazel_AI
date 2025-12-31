@@ -4,10 +4,11 @@ from datetime import datetime
 import config
 from config import ASSESSMENT_RULES
 from state_manager import (
-    SessionState, 
-    AssessmentState, 
-    AssessmentDimension, 
-    RiskLevel, 
+    SessionState,
+    AssessmentState,
+    AssessmentDimension,
+    RiskLevel,
+    ResistanceLevel,
     ConsultationStage,
     MessageRole
 )
@@ -19,47 +20,105 @@ from llm_engine import LLMEngine
 class TheBrain:
     def __init__(self, llm_engine: LLMEngine):
         self.llm = llm_engine
+        # 用于临时存储当前轮次的模型原始输出
+        self.last_guard_raw_output = ""
+        self.last_brain_risk_raw_output = ""
+        self.last_brain_assessment_raw_output = ""
+        self.last_resistance_raw_output = ""  # 新增：阻力判断原始输出
 
     def fast_reaction(self, session: SessionState, user_msg: str) -> str:
         """
         [修改] 快速反应回路 (Fast Loop)
-        不调用 8B 模型，仅进行安全检查 + 返回当前阶段的预设指令
+        不调用 8B 模型，仅进行安全检查 + 阻力检测 + 返回当前阶段的预设指令
         """
+        # 重置当前轮次的输出记录
+        self.last_guard_raw_output = ""
+        self.last_brain_risk_raw_output = ""
+        self.last_brain_assessment_raw_output = ""
+        self.last_resistance_raw_output = ""
+
         # 1. 快速安全扫描 (Regex + 1.5B)
-        is_crisis = self.llm.fast_risk_check(user_msg)
-        
+        is_crisis, guard_raw = self.llm.fast_risk_check(user_msg)
+        self.last_guard_raw_output = guard_raw
+
         if is_crisis:
-            # 如果小模型觉得有风险，直接切入危机模式，不再犹豫
             session.risk_level = RiskLevel.CRISIS
             return self._generate_crisis_instruction(session, user_msg)
-        
-        # 2. 如果无危机，直接生成当前阶段的指令 (不等待评估更新)
-        # 这里的 instruction 也是基于 config 的预设文本，生成极快
+
+        # 2. 快速阻力检测（正则）
+        detected_resistance = self.llm.quick_resistance_check(user_msg)
+
+        if detected_resistance:
+            # 如果检测到阻力
+            if not session.resistance.llm_confirmed and session.resistance.consecutive_count == 0:
+                # 首次检测到阻力，标记为待确认（慢速回路会确认）
+                session.resistance.level = detected_resistance
+                session.resistance.evidence = user_msg
+                # 暂不增加consecutive_count，等LLM确认后再增加
+            elif session.resistance.llm_confirmed and session.resistance.consecutive_count >= 1:
+                # 二次触发（已被LLM确认过），触发应对策略
+                session.resistance.consecutive_count += 1
+                session.resistance.evidence = user_msg
+                return self._generate_resistance_instruction(session, detected_resistance)
+        else:
+            # 未检测到阻力，重置
+            session.reset_resistance()
+
+        # 3. 如果无危机、无二次阻力，生成正常指令
         return self._generate_instruction(session, user_msg)
 
     def slow_assessment_update(self, session: SessionState, user_msg: str):
         """
-        [新增] 慢速评估回路 (Slow Loop)
+        [修改] 慢速评估回路 (Slow Loop)
         在 Avatar 回复后调用，使用 8B 模型精细更新状态
         """
         # 1. 详细风险分析 (记录数据用，也可作为二次校验)
-        # 虽然 Avatar 已经回复了，但我们依然记录一下精确的风险等级
-        risk_level = self.llm.analyze_risk_level(user_msg, session.get_history_text())
+        risk_level, risk_raw = self.llm.analyze_risk_level(user_msg, session.get_history_text())
+        self.last_brain_risk_raw_output = risk_raw
         session.risk_level = risk_level
 
-        # 2. 更新维度评分
+        # 2. 阻力LLM确认（仅在首次正则检测时）
+        if (not session.resistance.llm_confirmed and
+            session.resistance.consecutive_count == 0 and
+            session.resistance.evidence):  # 有待确认的阻力
+
+            has_resistance, confirmed_level, resistance_raw = self.llm.analyze_resistance(
+                user_msg, session.get_history_text()
+            )
+            self.last_resistance_raw_output = resistance_raw
+
+            if has_resistance:
+                # LLM确认有阻力
+                session.resistance.llm_confirmed = True
+                session.resistance.level = confirmed_level
+                session.resistance.consecutive_count = 1  # 确认后设为1
+                session.resistance.last_updated_turn = session.turn_count
+            else:
+                # LLM不认为有阻力，重置
+                session.reset_resistance()
+
+        # 3. 更新维度评分
         if session.current_stage != ConsultationStage.CLOSING_EMPOWERMENT:
-            updates = self.llm.assess_dimensions_update(user_msg, session.assessment)
+            full_json, assessment_raw = self.llm.assess_dimensions_update(user_msg, session.assessment)
+            self.last_brain_assessment_raw_output = assessment_raw
+
+            # 提取 updates 字段
+            updates = full_json.get("updates", {})
+
             for dim_name, data in updates.items():
                 if dim_name in AssessmentDimension.__members__:
-                    session.assessment.update_score(
-                        dimension=AssessmentDimension[dim_name],
-                        score=data.get('score'),
-                        evidence=data.get('evidence'),
-                        current_turn=session.turn_count
-                    )
-        
-        # 3. 阶段流转判断 (为下一轮做准备)
+                    score = data.get('score')
+                    evidence = data.get('evidence')
+
+                    if score is not None:
+                        session.assessment.update_score(
+                            dimension=AssessmentDimension[dim_name],
+                            score=score,
+                            evidence=evidence or "",
+                            current_turn=session.turn_count
+                        )
+
+        # 4. 阶段流转判断 (为下一轮做准备)
         self._manage_stage_transition(session)
 
     def _generate_crisis_instruction(self, session: SessionState, user_msg: str) -> str:
@@ -72,6 +131,26 @@ class TheBrain:
         
         # 用模板变量替换
         return config.prompts.get("safety", "crisis_instruction", pain_point=pain_point)
+
+    def _generate_resistance_instruction(self, session: SessionState, level: ResistanceLevel) -> str:
+        """
+        生成阻力应对指令（三档策略）
+
+        Args:
+            session: 会话状态
+            level: 阻力等级
+
+        Returns:
+            对应等级的应对指令
+        """
+        level_to_prompt = {
+            ResistanceLevel.PASSIVE: "passive_response",
+            ResistanceLevel.DEFENSIVE: "defensive_response",
+            ResistanceLevel.HOSTILE: "hostile_response"
+        }
+
+        prompt_key = level_to_prompt.get(level, "passive_response")
+        return config.prompts.get("resistance", prompt_key)
 
     def _manage_stage_transition(self, session: SessionState):
         """
