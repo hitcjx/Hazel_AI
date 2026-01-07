@@ -2,13 +2,19 @@ import json
 import re
 from typing import Dict, List, Optional, Iterator
 from abc import ABC, abstractmethod
-import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
 import config
 from config import ModelConfig, ModelBackend
 from state_manager import AssessmentState, RiskLevel, AssessmentDimension, ResistanceLevel
 import threading
 from threading import Thread
+
+# 本地模型依赖 - 仅在使用本地模型时导入
+try:
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
+    HAS_TRANSFORMERS = True
+except ImportError:
+    HAS_TRANSFORMERS = False
 
 # =============================================================================
 # 用户阻力检测模式（正则）
@@ -85,6 +91,12 @@ class LocalModelAdapter(ModelAdapter):
             model_path: 模型路径（HuggingFace格式）
             gpu_lock: GPU互斥锁（多模型共享显存时使用）
         """
+        if not HAS_TRANSFORMERS:
+            raise ImportError(
+                "Local model requires 'transformers' and 'torch'. "
+                "Install with: pip install torch transformers bitsandbytes accelerate"
+            )
+
         self.model_path = model_path
         self.gpu_lock = gpu_lock
 
