@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from database import StudentManager, SessionManagerDB, TeacherManager, AssessmentLogger, init_database
 
 # 导入流式气泡分割器
-from stream_bubble_splitter import StreamBubbleSplitter
+from core.stream_bubble_splitter import StreamBubbleSplitter
 
 # 初始化数据库表
 init_database()
@@ -184,7 +184,7 @@ async def set_stage(request: SetStageRequest):
         # 导入ConsultationStage
         import sys
         sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        from state_manager import ConsultationStage
+        from core.state_manager import ConsultationStage
 
         # 设置阶段
         if request.stage == "WARM_UP_SCAN":
@@ -1270,7 +1270,7 @@ async def get_assessment_advice(session_id: str, teacher_id: str = None, teacher
         # 加载 suggestion_prompt.yaml
         import yaml
         from pathlib import Path
-        SUGGESTION_PROMPT_PATH = Path(__file__).parent.parent / "suggestion_prompt.yaml"
+        SUGGESTION_PROMPT_PATH = Path(__file__).parent.parent / "prompts" / "suggestion_prompt.yaml"
 
         if SUGGESTION_PROMPT_PATH.exists():
             with open(SUGGESTION_PROMPT_PATH, 'r', encoding='utf-8') as f:
@@ -1727,7 +1727,7 @@ async def test_sfbt_prompt(request: SFBTPromptRequest):
         hazel = get_shared_hazel_instance()
 
         # 直接调用 avatar 的 LLM（不经过完整流程）
-        from llm_engine import LLEngine
+        from core.llm_engine import LLEngine
         if isinstance(hazel.avatar.llm_engine, LLEngine):
             response = hazel.avatar.llm_engine.generate_response(
                 system_prompt=system_prompt,

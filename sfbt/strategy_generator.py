@@ -19,7 +19,7 @@ from openai import OpenAI
 # 导入配置
 import sys
 sys.path.append(str(Path(__file__).parent.parent))
-from config import APIConfig
+from core.config import APIConfig
 from sfbt import scoring_rules
 
 

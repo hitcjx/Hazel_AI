@@ -4,11 +4,10 @@ main.py - 纯净交互版
 """
 import json
 import os
-from datetime import datetime
-from the_avatar import TheAvatar
-from state_manager import SessionState
 import uuid
-from state_manager import MessageRole
+from datetime import datetime
+from core.the_avatar import TheAvatar
+from core.state_manager import SessionState, MessageRole
 
 class CleanInterface:
     def __init__(self):

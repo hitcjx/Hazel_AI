@@ -39,8 +39,7 @@ checkpoint-*/
 *.swo
 
 # Chainlit
-.chainlit/mdbook/
-.chainlit/transcribed/
+.chainlit/
 
 # 临时文件
 *.tmp
@@ -55,3 +54,6 @@ test_*.py
 *.bak
 *~
 frontend/node_modules/
+frontend/.next/
+chat_log_*.json
+sfbt/test_results.json

@@ -1,7 +1,7 @@
 {
   "/page": "app/page.js",
-  "/teacher/dashboard/page": "app/teacher/dashboard/page.js",
   "/teacher/teachers/page": "app/teacher/teachers/page.js",
   "/teacher/class/page": "app/teacher/class/page.js",
-  "/teacher/login/page": "app/teacher/login/page.js"
+  "/teacher/login/page": "app/teacher/login/page.js",
+  "/teacher/dashboard/page": "app/teacher/dashboard/page.js"
 }
