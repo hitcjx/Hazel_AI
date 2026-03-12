@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>端到端测试报告 - 四阶段完整流程</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            min-height: 100vh;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            animation: fadeIn 0.5s ease-in;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .header {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+            color: white;
+            padding: 35px;
+            border-radius: 16px;
+            margin-bottom: 25px;
+            box-shadow: 0 10px 40px rgba(99, 102, 241, 0.3);
+            position: relative;
+            overflow: hidden;
+        }
+        .header::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            right: -50%;
+            width: 100%;
+            height: 100%;
+            background: radial-gradient(circle, rgba(255,255,255,0.1) 0%, transparent 70%);
+        }
+        .header h1 { font-size: 32px; margin-bottom: 10px; font-weight: 700; }
+        .header p { opacity: 0.9; font-size: 15px; }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .stat-card {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 14px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .stat-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+        }
+        .stat-card .label { color: #64748b; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .stat-card .value { font-size: 28px; font-weight: 700; color: #1e293b; margin-top: 5px; }
+        .stage-stats {
+            background: rgba(255, 255, 255, 0.95);
+            padding: 25px;
+            border-radius: 14px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            margin-bottom: 25px;
+        }
+        .stage-stats h3 { margin-bottom: 18px; color: #1e293b; font-size: 18px; }
+        .stage-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 15px;
+        }
+        .stage-item {
+            padding: 18px;
+            border-radius: 12px;
+            text-align: center;
+            transition: transform 0.2s ease;
+        }
+        .stage-item:hover {
+            transform: scale(1.03);
+        }
+        .stage-item.warmup { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); }
+        .stage-item.deepdive { background: linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%); }
+        .stage-item.sfbt { background: linear-gradient(135deg, #d1fae5 0%, #6ee7b7 100%); }
+        .stage-item.closing { background: linear-gradient(135deg, #fce7f3 0%, #f9a8d4 100%); }
+        .stage-item .stage-name { font-weight: 600; color: #1e293b; }
+        .stage-item .stage-turns { font-size: 24px; font-weight: 700; color: #475569; margin-top: 5px; }
+        .conversation {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            overflow: hidden;
+        }
+        .turn {
+            padding: 25px;
+            border-bottom: 1px solid #e2e8f0;
+            transition: background 0.2s ease;
+        }
+        .turn:hover {
+            background: #f8fafc;
+        }
+        .turn:last-child { border-bottom: none; }
+        .turn-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+        .turn-number {
+            background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+            color: white;
+            padding: 6px 16px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 600;
+            box-shadow: 0 2px 8px rgba(99, 102, 241, 0.3);
+        }
+        .stage-badge {
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+        .stage-WARM_UP_SCAN { background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); color: #92400e; }
+        .stage-EMPATHY_DEEP_DIVE { background: linear-gradient(135deg, #dbeafe 0%, #93c5fd 100%); color: #1e40af; }
+        .stage-REFRAMING_SFBT { background: linear-gradient(135deg, #d1fae5 0%, #6ee7b7 100%); color: #065f46; }
+        .stage-CLOSING_EMPOWERMENT { background: linear-gradient(135deg, #fce7f3 0%, #f9a8d4 100%); color: #9d174d; }
+        .timestamp { color: #94a3b8; font-size: 12px; }
+        .message {
+            margin: 12px 0;
+            padding: 18px;
+            border-radius: 12px;
+            position: relative;
+        }
+        .user-message {
+            background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+            margin-right: 60px;
+            border-left: 4px solid #3b82f6;
+        }
+        .avatar-message {
+            background: linear-gradient(135deg, #fdf4ff 0%, #fae8ff 100%);
+            margin-left: 60px;
+            border-left: 4px solid #d946ef;
+        }
+        .message-label {
+            font-weight: 600;
+            font-size: 12px;
+            margin-bottom: 8px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .state-info {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            padding: 18px;
+            border-radius: 12px;
+            margin-top: 18px;
+            font-size: 13px;
+            border: 1px solid #e2e8f0;
+        }
+        .state-info h4 { margin-bottom: 12px; color: #334155; font-size: 14px; }
+        .state-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+        }
+        .state-item {
+            background: white;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 12px;
+            border: 1px solid #e2e8f0;
+        }
+        .state-item .key { color: #64748b; }
+        .state-item .val { color: #1e293b; font-weight: 500; }
+        .sfbt-info {
+            margin-top: 12px;
+            background: linear-gradient(135deg, #fff7ed 0%, #ffedd5 100%);
+            padding: 14px;
+            border-radius: 10px;
+            border-left: 4px solid #f97316;
+        }
+        .sfbt-info h4 {
+            margin: 0 0 10px 0;
+            color: #c2410c;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .sfbt-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+        }
+        .sfbt-item {
+            background: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            border: 1px solid #fed7aa;
+        }
+        .sfbt-item .key { color: #9a3412; }
+        .sfbt-item .val { color: #1e293b; font-weight: 500; }
+        .elapsed {
+            color: #94a3b8;
+            font-size: 12px;
+            margin-top: 12px;
+            padding-top: 10px;
+            border-top: 1px dashed #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🧪 端到端测试报告</h1>
+            <p>四阶段完整流程测试 - 2026-03-11 21:17:16</p>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <div class="label">总对话轮数</div>
+                <div class="value">20</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">当前阶段</div>
+                <div class="value">REFRAMING_SFBT</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">总耗时</div>
+                <div class="value">102.4秒</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">测试状态</div>
+                <div class="value">✅ 完成</div>
+            </div>
+        </div>
+
+        <div class="stage-stats">
+            <h3>📈 各阶段轮数统计</h3>
+            <div class="stage-grid">
+                <div class="stage-item warmup">
+                    <div class="stage-name">暖身扫描</div>
+                    <div class="stage-turns">0 轮</div>
+                </div>
+                <div class="stage-item deepdive">
+                    <div class="stage-name">深度共情</div>
+                    <div class="stage-turns">0 轮</div>
+                </div>
+                <div class="stage-item sfbt">
+                    <div class="stage-name">重构/SFBT</div>
+                    <div class="stage-turns">20 轮</div>
+                </div>
+                <div class="stage-item closing">
+                    <div class="stage-name">结束赋能</div>
+                    <div class="stage-turns">0 轮</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="conversation">
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 1 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:14:31</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>最近月考成绩出来了，数学又没考好，明明复习了很久...看着试卷上那些粗心错的题，气得昨晚都没睡好。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>啊这感觉我懂，明明付出 effort 了结果却不对劲。  
+你昨晚翻来覆去没睡好，其实心里是挺想把这事扛起来的吧？  
+那种“我已经尽力复习了”的委屈，换成谁都会闷着一口气。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 6.9秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S1_合作构建</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">应对问题</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">应对问题本体</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">-11</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "竭尽", "goal_clarity": "缺失", "exception_detected": "无", "stance": "被动", "trend": "恶化"}, "method": "应对问题", "action_status": "in_progress", "action": "应对问题本体", "plugin": "赞美", "intend": "探索应对困境的努力"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 2 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:14:41</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>其实我刷题刷到凌晨两点，错的都是些低级错误...现在看见数学作业本都想吐。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>刷到凌晨两点啊……  
+你其实一直在硬扛着往前走呢。  
+那些题明明都会的，就是临场发懵对吧？</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 5.7秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S1_合作构建</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">应对问题</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">应对问题本体</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">-11.0</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "竭尽", "goal_clarity": "缺失", "exception_detected": "无", "stance": "被动", "trend": "恶化"}, "method": "应对问题", "action_status": "in_progress", "action": "具体化", "plugin": "赞美", "intend": "发现应对努力"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 3 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:14:49</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...一到考场脑子就空白，手心直冒汗，连题目都看不进去。昨天我妈还说"别紧张"，可她说得轻松，根本不知道我每天睡前都在默背公式。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>啊，背到手心出汗那种……  
+她当然觉得说句“别紧张”就够了。  
+你明明已经一个人撑了这么久。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.6秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S1_合作构建</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">-3.8</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "缺失", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "应对问题", "action_status": "in_progress", "action": "具体化", "plugin": "赞美", "intend": "具象化紧张体验"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 4 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:14:59</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>有时候真想直接躺平算了...但又怕对不起爸妈，他们每天起早贪黑的。刚才翻到草稿纸上写着"坚持住"，那是我上周写给自己看的。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>看到那句“坚持住”……  
+你其实一直都没真想放弃吧。  
+明明累得快撑不住了，还给自己留了句话打气。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 6.0秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S1_合作构建</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">应对问题</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">应对问题本体</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">0.9</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "应对问题", "action_status": "in_progress", "action": "应对问题本体", "plugin": "赞美", "intend": "确认应对努力"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 5 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:15:07</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>那张纸都皱巴巴的了...其实写的时候手都在抖。今天早上又看到它，突然就哭了，但还是把它塞进书包带过来了。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>那张纸都皱成那样了……还带着。  
+你真的一直在扛啊。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.4秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S1_合作构建</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">应对问题</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">应对问题本体</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">2.8</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "应对问题", "action_status": "in_progress", "action": "具体化", "plugin": "赞美", "intend": "深化应对努力觉察"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 6 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:15:15</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...它现在就在我书包最里层，都快磨破了。每次想撕掉的时候，又觉得...好像留着它，就能多撑一会儿。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>那张纸……都快磨破了还留着。  
+你不是一直扛到现在了嘛。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.4秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">3.5</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "应对问题", "action_status": "in_progress", "action": "具体化", "plugin": "赞美", "intend": "深化应对努力"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 7 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:15:24</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>它快破了...但我不想换新的。好像只要它还在，我就还没到最差的那一步。昨天晚自习停电的时候，我还摸了好久才安心。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>停电那会儿……还一直摸着它。  
+你早就把它变成自己的习惯了。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.8秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">引出</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">3.8</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "挖掘坚持的例外时刻"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 8 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:15:31</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...它都快磨出毛边了。有时候手指碰到那道折痕，就觉得自己还能撑住。要是哪天真的没了，我怕我会...不知道该怎么办。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>那道折痕……都快磨成你的小习惯了。  
+停电的时候摸一摸，手上有数，心里也就稳了。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 3.8秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">引出</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">5.7</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "波动", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "确认坚持的线索"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 9 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:15:40</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...它现在都快磨出一个小坑了。每次手指碰到那里，就觉得自己还能再撑一会儿。其实我知道这样不对，但要是真把它扔了，我怕晚上会睡不着。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>那小坑……都快成你的老朋友了。  
+摸着踏实，扔了还真怕心里空落落的。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.4秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">6.5</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "波动", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "确认坚持中的资源"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 10 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:15:48</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>它本来就是去年艺术节抽奖发的，当时随手塞书包里了。现在...现在每天不摸两下都觉得少了点什么，连睡觉都要压在枕头下面。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>那张抽奖纸……都快揉成护身符了。  
+你把它用成了自己的充电宝啊。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.4秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">引出</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">3.8</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "缺失", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "挖掘例外中的资源"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 11 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:15:59</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>其实...我每天晚上都会偷偷看一眼上面的字。明明就是张废纸，可要是哪天不见了，我可能会疯掉吧。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>那行字……都快被你看成小灯塔了。  
+指尖碰一碰，心里就稳一稳。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 6.0秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">引出</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">3.9</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "确认例外中的资源"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 12 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:16:09</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...它现在都快被我摸得发毛了。每次考砸了或者心情不好，就会把它掏出来看一遍又一遍，好像上面真有魔法似的。其实我知道这样不对，但就是改不掉。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>它都快被你摸出包浆了……  
+但哪有什么不对的，谁还没个撑不住的时候。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 7.2秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val"></span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">4.0</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "确认例外中的资源"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 13 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:16:17</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>其实...我同桌前两天看见我在折那张纸，她还笑我说像在做法。但我没敢告诉她，每次折完小星星放进笔袋时，总觉得心里也跟着亮了一点。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>啊，折完放进笔袋……  
+那一下，像是把心也捋平了。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 5.0秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">引出</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">6.4</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "波动", "energy_status": "波动", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "好转"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "引出折星星的例外时刻"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 14 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:16:26</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...就是那种感觉。折的时候手忙脚乱的，但每压平一道折痕，心里就松快一点。有时候笔袋都快塞不下了，可还是想折。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>每压一道折痕，手底下其实都在给自己撑腰呢。  
+那点松快……是你自己一点点挣出来的。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 5.0秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">放大</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">completed</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">7.4</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "波动", "energy_status": "波动", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "好转"}, "method": "例外情境", "action_status": "completed", "action": "放大", "plugin": "赞美", "intend": "放大折纸时的积极体验"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 15 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:16:34</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>其实...我都没想过是给自己撑腰。但听你这么一说，好像真是这样。上周物理考砸了，我躲在厕所折了好久，手指都发麻了，但出来的时候确实没那么喘不上气了。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>手指发麻还坚持折……  
+那会儿你其实在硬扛着把自己拉回来。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.2秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S3_赋能行动</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">强化</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">completed</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">10.7</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "解决", "energy_status": "波动", "goal_clarity": "模糊", "exception_detected": "稳固", "stance": "合作", "trend": "好转"}, "method": "例外情境", "action_status": "completed", "action": "强化", "plugin": "赞美", "intend": "巩固自我赋能体验"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 16 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:16:42</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...其实也不懂什么方法，就是觉得停下来的话，整个人就要垮掉了。折着折着，好像就能偷偷喘口气，假装自己还撑得住。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>手指发麻都没松手……  
+你早就比自己以为的更撑得住。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.9秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">强化</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">completed</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">7.9</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "解决", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "稳固", "stance": "合作", "trend": "好转"}, "method": "例外情境", "action_status": "completed", "action": "强化", "plugin": "赞美", "intend": "巩固改变力量"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 17 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:16:50</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>其实...我也没想撑多久，就是怕一松手，那些事全涌上来。昨天晚上又折了三个纸星星，藏在数学课本里了。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>藏了三个啊……  
+那本数学书现在翻起来，该有点分量了。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 5.2秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S3_赋能行动</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">强化</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">9.8</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "波动", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "稳固", "stance": "合作", "trend": "好转"}, "method": "例外情境", "action_status": "in_progress", "action": "重新开始", "plugin": "赞美", "intend": "激活已有应对资源"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 18 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:16:59</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>嗯...每次翻到那页都会卡一下，今天上课还被老师点名了。但奇怪的是，摸到那些星星的时候，反而没那么怕回答问题了。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>摸到就卡一下……  
+那点硌手的实在感，好像比纸硬。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 5.7秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S2_目标构建&资源挖掘</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">强化</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">completed</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">4.5</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "波动", "energy_status": "波动", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "好转"}, "method": "例外情境", "action_status": "completed", "action": "强化", "plugin": "赞美", "intend": "巩固微小例外"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 19 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:17:07</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>是啊，本来纸折的应该软软的，但捏太久了，边都磨硬了...就像心里那些事，明明该轻的，却越来越沉。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>捏久了，边角都硬了……  
+你一直没放手，它当然沉得有分量。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 4.4秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S3_赋能行动</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">强化</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">8.4</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "波动", "energy_status": "波动", "goal_clarity": "模糊", "exception_detected": "稳固", "stance": "合作", "trend": "好转"}, "method": "例外情境", "action_status": "in_progress", "action": "引出", "plugin": "赞美", "intend": "引出例外中的资源"}</pre>
+                    </div>
+
+
+            </div>
+
+            <div class="turn">
+                <div class="turn-header">
+                    <span class="turn-number">第 20 轮</span>
+                    <span class="stage-badge stage-REFRAMING_SFBT">重构/SFBT</span>
+                    <span class="timestamp">21:17:15</span>
+                </div>
+
+                <div class="message user-message">
+                    <div class="message-label">👤 学生 (模拟用户)</div>
+                    <div>我...也不是不想放，就是怕一拿出来，那些事全散开，我捡不起来。</div>
+                </div>
+
+                <div class="message avatar-message">
+                    <div class="message-label">🤖 AI 咨询师</div>
+                    <div>捏太紧会疼，松一点……说不定自己能接住。</div>
+                </div>
+
+                <div class="elapsed">⏱️ 响应耗时: 5.3秒</div>
+
+                <div class="state-info">
+                    <h4>📊 状态信息</h4>
+                    <div class="state-grid">
+                        <div class="state-item"><span class="key">阶段:</span> <span class="val">REFRAMING_SFBT</span></div>
+                        <div class="state-item"><span class="key">风险等级:</span> <span class="val">NORMAL</span></div>
+                        <div class="state-item"><span class="key">阻力:</span> <span class="val">NONE</span></div>
+                        <div class="state-item"><span class="key">会话ID:</span> <span class="val">N/A...</span></div>
+                    </div>
+                </div>
+
+                    <div class="sfbt-info">
+                        <h4>🎯 SFBT 策略</h4>
+                        <div class="sfbt-grid">
+                            <div class="sfbt-item"><span class="key">模块:</span> <span class="val">S1_合作构建</span></div>
+                            <div class="sfbt-item"><span class="key">方法:</span> <span class="val">例外情境</span></div>
+                            <div class="sfbt-item"><span class="key">当前动作:</span> <span class="val">强化</span></div>
+                            <div class="sfbt-item"><span class="key">动作状态:</span> <span class="val">in_progress</span></div>
+                            <div class="sfbt-item"><span class="key">插件:</span> <span class="val">赞美</span></div>
+                            <div class="sfbt-item"><span class="key">分数:</span> <span class="val">-0.8</span></div>
+                        </div>
+                    </div>
+
+
+                    <div class="sfbt-info" style="margin-top: 10px; background: #f5f5f5;">
+                        <h4>📄 SFBT 原始 JSON</h4>
+                        <pre style="font-size: 11px; white-space: pre-wrap; word-break: break-all;">{"tags": {"talk_focus": "问题", "energy_status": "维持", "goal_clarity": "模糊", "exception_detected": "闪烁", "stance": "合作", "trend": "维持"}, "method": "例外情境", "action_status": "in_progress", "action": "强化", "plugin": "赞美", "intend": "巩固已有应对力量"}</pre>
+                    </div>
+
+
+            </div>
+
+        </div>
+    </div>
+</body>
+</html>

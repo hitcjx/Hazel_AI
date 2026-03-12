@@ -2,9 +2,7 @@
 main.py - 纯净交互版
 功能：流式对话，无干扰 UI，会话结束后自动导出记录
 """
-import sys
 import json
-import time
 import os
 from datetime import datetime
 from the_avatar import TheAvatar
@@ -16,8 +14,38 @@ class CleanInterface:
     def __init__(self):
         print("⏳ 系统初始化中，请稍候... (加载模型可能需要 1-2 分钟)")
         self.avatar = TheAvatar()
-        self.session = SessionState(session_id=str(uuid.uuid4()))
+        # 保留一个默认session用于兼容
+        self.session = SessionState(
+            session_id=str(uuid.uuid4()),
+            user_id=str(uuid.uuid4())
+        )
+        # 多用户支持：每个session_id独立的SessionState
+        self.sessions = {}
         self.start_time = datetime.now()
+
+    def create_session(self, session_id: str, user_id: str) -> SessionState:
+        """为指定session_id创建独立的SessionState"""
+        session = SessionState(
+            session_id=session_id,
+            user_id=user_id
+        )
+        self.sessions[session_id] = session
+        return session
+
+    def get_session(self, session_id: str, user_id: str = None) -> SessionState:
+        """获取指定session_id的SessionState，如果不存在则创建"""
+        if session_id not in self.sessions:
+            # 默认创建
+            self.sessions[session_id] = SessionState(
+                session_id=session_id,
+                user_id=user_id or session_id
+            )
+        return self.sessions[session_id]
+
+    def clear_session(self, session_id: str):
+        """清除指定session_id的状态"""
+        if session_id in self.sessions:
+            del self.sessions[session_id]
         
     def clear_screen(self):
         # 简单清屏，提升沉浸感
@@ -85,6 +113,55 @@ class CleanInterface:
         print(f"✅ 对话已结束。")
         print(f"📂 完整记录（包含指令与评分）已保存至: {file_path}")
         print("="*50)
+
+    def chat_once(self, user_input: str) -> str:
+        """
+        处理单次对话（用于Web应用）
+
+        Args:
+            user_input: 用户输入
+
+        Returns:
+            AI回复文本
+        """
+        return self.chat_once_with_session(user_input, self.session)
+
+    def chat_once_with_session(self, user_input: str, session) -> str:
+        """
+        处理单次对话，使用指定的SessionState（支持多用户）
+
+        Args:
+            user_input: 用户输入
+            session: SessionState实例
+
+        Returns:
+            AI回复文本
+        """
+        try:
+            # 调用avatar的chat方法，获取生成器
+            response_chars = []
+            for char in self.avatar.chat(session, user_input):
+                response_chars.append(char)
+
+            # 将字符列表组合成完整回复
+            response = ''.join(response_chars)
+            return response
+
+        except Exception as e:
+            return f"处理失败：{str(e)}"
+
+    def stream_chat_with_session(self, user_input: str, session):
+        """
+        流式对话，使用指定的SessionState（支持多用户）
+
+        Args:
+            user_input: 用户输入
+            session: SessionState实例
+
+        Returns:
+            生成器，产生文本片段
+        """
+        return self.avatar.chat(session, user_input)
 
 if __name__ == "__main__":
     app = CleanInterface()

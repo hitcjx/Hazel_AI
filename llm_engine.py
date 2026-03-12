@@ -1,20 +1,28 @@
 import json
+import os
 import re
+import time
+import functools
 from typing import Dict, List, Optional, Iterator
 from abc import ABC, abstractmethod
 import config
-from config import ModelConfig, ModelBackend
+from config import ModelConfig, ModelBackend, RETRY_CONFIG
 from state_manager import AssessmentState, RiskLevel, AssessmentDimension, ResistanceLevel
 import threading
-from threading import Thread
+
+# 设置HuggingFace镜像站（解决国内网络问题）
+os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 # 本地模型依赖 - 仅在使用本地模型时导入
 try:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, TextIteratorStreamer
+    from peft import PeftModel
     HAS_TRANSFORMERS = True
+    HAS_PEFT = True
 except ImportError:
     HAS_TRANSFORMERS = False
+    HAS_PEFT = False
 
 # =============================================================================
 # 用户阻力检测模式（正则）
@@ -29,9 +37,13 @@ RESISTANCE_PATTERNS = {
         r"^无所谓\.?$",
         r"^\.{2,}$",  # 省略号（2个及以上点）
         r"^…+$",      # 中文省略号
-        r"^.{1,3}$",  # 1-3字极短回复
+        # 修复：移除过于宽泛的1-3字匹配，改为具体的短回复模式
         r"^嗯{1,3}\.?$",  # 嗯、嗯嗯
         r"^哦{1,3}\.?$",  # 哦、哦哦
+        r"^噢{1,3}\.?$",  # 噢
+        r"^哦哦+\.?$",    # 哦哦哦...
+        r"^好吧?\.?$",    # 好、好吧
+        r"^行吧?\.?$",    # 行、行吧
     ],
     ResistanceLevel.DEFENSIVE: [
         r"有用吗",
@@ -51,10 +63,13 @@ RESISTANCE_PATTERNS = {
         r"不想说",
         r"别问了",
         r"闭嘴",
+        # 修复：改为更精确的匹配，避免误判"我想去死"
+        r"你.*去死",   # 针对他人的敌意："你去死"
+        r"让.*去死",   # "让我去死"等
+        r"^去死吧?$",  # 单独的"去死"或"去死吧"
         r"滚",
         r"烦死",
         r"恶心",
-        r"去死",
         r"傻[Xx逼比]",
         r"妈的",
         r"[操草艹]",
@@ -83,13 +98,15 @@ class ModelAdapter(ABC):
 class LocalModelAdapter(ModelAdapter):
     """本地模型适配器 - 使用 transformers 库加载本地模型"""
 
-    def __init__(self, model_path: str, gpu_lock: threading.Lock):
+    def __init__(self, model_path: str, gpu_lock: threading.Lock, lora_adapter_path: str = None, use_lora: bool = False):
         """
         初始化本地模型
 
         Args:
             model_path: 模型路径（HuggingFace格式）
             gpu_lock: GPU互斥锁（多模型共享显存时使用）
+            lora_adapter_path: LoRA适配器路径（可选）
+            use_lora: 是否使用LoRA适配器
         """
         if not HAS_TRANSFORMERS:
             raise ImportError(
@@ -97,8 +114,16 @@ class LocalModelAdapter(ModelAdapter):
                 "Install with: pip install torch transformers bitsandbytes accelerate"
             )
 
+        if use_lora and not HAS_PEFT:
+            raise ImportError(
+                "LoRA adapter requires 'peft' library. "
+                "Install with: pip install peft"
+            )
+
         self.model_path = model_path
         self.gpu_lock = gpu_lock
+        self.use_lora = use_lora
+        self.lora_adapter_path = lora_adapter_path
 
         # 4-bit 量化配置
         bnb_config = BitsAndBytesConfig(
@@ -108,7 +133,8 @@ class LocalModelAdapter(ModelAdapter):
         )
 
         print(f"Loading Local Model: {model_path}...")
-        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
+        # 加载基础模型
         self.model = AutoModelForCausalLM.from_pretrained(
             model_path,
             quantization_config=bnb_config,
@@ -116,7 +142,20 @@ class LocalModelAdapter(ModelAdapter):
             torch_dtype=torch.float16,
             trust_remote_code=True
         ).eval()
+
+        # 如果需要，加载LoRA适配器
+        if use_lora and lora_adapter_path:
+            print(f"Loading LoRA Adapter: {lora_adapter_path}...")
+            self.model = PeftModel.from_pretrained(self.model, lora_adapter_path)
+            print(f"✓ LoRA Adapter loaded: {lora_adapter_path}")
+            # 从adapter路径加载tokenizer（包含特殊token配置）
+            self.tokenizer = AutoTokenizer.from_pretrained(lora_adapter_path, trust_remote_code=True)
+        else:
+            # 从基础模型路径加载tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+
         print(f"✓ Model loaded: {model_path}")
+
 
     def generate(self, messages: List[dict], max_tokens: int, temperature: float) -> str:
         """同步生成"""
@@ -174,6 +213,126 @@ class LocalModelAdapter(ModelAdapter):
         return streamer
 
 # =============================================================================
+# vLLM 模型适配器（高并发优化）
+# =============================================================================
+class VLLMModelAdapter(ModelAdapter):
+    """vLLM 模型适配器 - 使用 vLLM 引擎实现高并发推理"""
+
+    def __init__(self, model_path: str, lora_adapter_path: str = None, use_lora: bool = False,
+                 max_model_len: int = 2048, gpu_memory_utilization: float = 0.9,
+                 quantization: str = None):
+        """
+        初始化 vLLM 模型
+
+        Args:
+            model_path: 模型路径（HuggingFace格式）
+            lora_adapter_path: LoRA适配器路径（可选）
+            use_lora: 是否使用LoRA适配器
+            max_model_len: 最大序列长度
+            gpu_memory_utilization: GPU显存利用率
+            quantization: 量化方式（如 "bitsandbytes", "awq" 等）
+        """
+        try:
+            from vllm import LLM, SamplingParams
+            from vllm.lora.request import LoRARequest
+            HAS_VLLM = True
+        except ImportError:
+            raise ImportError(
+                "vLLM adapter requires 'vllm' package. "
+                "Install it with: pip install vllm"
+            )
+
+        self.model_path = model_path
+        self.use_lora = use_lora
+        self.lora_adapter_path = lora_adapter_path
+        self.max_model_len = max_model_len
+
+        print(f"Loading vLLM Model: {model_path}...")
+
+        # 构建 vLLM 初始化参数
+        vllm_kwargs = {
+            "model": model_path,
+            "enable_lora": use_lora,
+            "max_lora_rank": 64,  # LoRA rank
+            "max_model_len": max_model_len,
+            "gpu_memory_utilization": gpu_memory_utilization,
+            "trust_remote_code": True,
+        }
+
+        # 如果指定量化方式
+        if quantization:
+            vllm_kwargs["quantization"] = quantization
+            vllm_kwargs["load_format"] = quantization
+
+        # 初始化 vLLM 引擎
+        self.llm = LLM(**vllm_kwargs)
+
+        # 如果需要，准备 LoRA request
+        if use_lora and lora_adapter_path:
+            print(f"Preparing LoRA Adapter: {lora_adapter_path}...")
+            self.lora_request = LoRARequest(
+                lora_name=os.path.basename(lora_adapter_path),
+                lora_int_id=1,
+                lora_path=lora_adapter_path
+            )
+            print(f"✓ LoRA Adapter prepared: {lora_adapter_path}")
+        else:
+            self.lora_request = None
+
+        print(f"✓ vLLM Model loaded: {model_path}")
+
+    def generate(self, messages: List[dict], max_tokens: int, temperature: float) -> str:
+        """同步生成"""
+        # 构建 Prompt
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            self.lora_adapter_path if self.lora_request else self.model_path,
+            trust_remote_code=True
+        )
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+        # 生成参数
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=0.9,
+        )
+
+        # 调用 vLLM 生成
+        if self.lora_request:
+            outputs = self.llm.generate([text], sampling_params, lora_request=self.lora_request)
+        else:
+            outputs = self.llm.generate([text], sampling_params)
+
+        return outputs[0].outputs[0].text
+
+    def generate_stream(self, messages: List[dict], max_tokens: int, temperature: float) -> Iterator[str]:
+        """流式生成"""
+        # vLLM 原生支持流式输出
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            self.lora_adapter_path if self.lora_request else self.model_path,
+            trust_remote_code=True
+        )
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+        # 生成参数
+        sampling_params = SamplingParams(
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=0.9,
+        )
+
+        # 流式生成
+        if self.lora_request:
+            outputs = self.llm.generate([text], sampling_params, lora_request=self.lora_request)
+        else:
+            outputs = self.llm.generate([text], sampling_params)
+
+        # 返回完整输出（vLLM 不支持逐token流式，但可以快速返回完整结果）
+        yield outputs[0].outputs[0].text
+
+# =============================================================================
 # OpenAI 格式 API 适配器
 # =============================================================================
 class OpenAIAdapter(ModelAdapter):
@@ -207,39 +366,94 @@ class OpenAIAdapter(ModelAdapter):
         print(f"✓ OpenAI API initialized: {model_name} (endpoint: {base_url or 'default'})")
 
     def generate(self, messages: List[dict], max_tokens: int, temperature: float) -> str:
-        """同步生成"""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=False
-            )
-            return response.choices[0].message.content.strip()
+        """同步生成 - 带重试和超时"""
+        max_retries = RETRY_CONFIG["max_retries"]
+        retry_delay = RETRY_CONFIG["retry_delay"]
+        retry_multiplier = RETRY_CONFIG["retry_multiplier"]
+        timeout = RETRY_CONFIG["timeout"]
 
-        except Exception as e:
-            print(f"[OpenAI API Error] {str(e)}")
-            return f"[API调用失败: {str(e)}]"
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=False,
+                    timeout=timeout
+                )
+                content = response.choices[0].message.content
+                if content and content.strip():
+                    return content.strip()
+                else:
+                    # 空响应，触发重试
+                    print(f"[OpenAI API] 空响应，重试 {attempt + 1}/{max_retries}")
+                    last_error = "空响应"
+
+            except Exception as e:
+                print(f"[OpenAI API Error] 尝试 {attempt + 1}/{max_retries}: {str(e)}")
+                last_error = str(e)
+
+            # 指数退避等待
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (retry_multiplier ** attempt)
+                print(f"[OpenAI API] 等待 {wait_time:.1f} 秒后重试...")
+                time.sleep(wait_time)
+
+        return f"[API调用失败: {last_error}]"
 
     def generate_stream(self, messages: List[dict], max_tokens: int, temperature: float) -> Iterator[str]:
-        """流式生成"""
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                stream=True
-            )
+        """流式生成 - 带重试"""
+        max_retries = RETRY_CONFIG["max_retries"]
+        retry_delay = RETRY_CONFIG["retry_delay"]
+        retry_multiplier = RETRY_CONFIG["retry_multiplier"]
+        timeout = RETRY_CONFIG["timeout"]
 
-            for chunk in response:
-                if chunk.choices[0].delta.content:
-                    yield chunk.choices[0].delta.content
+        for attempt in range(max_retries):
+            try:
+                response = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    stream=True,
+                    timeout=timeout
+                )
 
-        except Exception as e:
-            print(f"[OpenAI API Stream Error] {str(e)}")
-            yield f"[API流式调用失败: {str(e)}]"
+                has_content = False
+                for chunk in response:
+                    # 检查 choices 列表是否为空
+                    if not chunk.choices:
+                        continue
+
+                    delta = chunk.choices[0].delta
+
+                    # 有content才yield
+                    if hasattr(delta, 'content') and delta.content:
+                        has_content = True
+                        yield delta.content
+
+                # 如果成功获取到内容，直接返回
+                if has_content:
+                    return
+
+                # 空响应，触发重试
+                print(f"[OpenAI API Stream] 空响应，重试 {attempt + 1}/{max_retries}")
+
+            except Exception as e:
+                print(f"[OpenAI API Stream Error] 尝试 {attempt + 1}/{max_retries}: {str(e)}")
+                import traceback
+                traceback.print_exc()
+
+            # 指数退避等待
+            if attempt < max_retries - 1:
+                wait_time = retry_delay * (retry_multiplier ** attempt)
+                print(f"[OpenAI API Stream] 等待 {wait_time:.1f} 秒后重试...")
+                time.sleep(wait_time)
+
+        # 所有重试都失败，返回错误信息
+        yield "[抱歉，服务暂时不稳定，请稍后再试。]"
 
 class LLMEngine:
     """
@@ -282,7 +496,9 @@ class LLMEngine:
             api_key=config.APIConfig.BRAIN_API_KEY,
             api_model=config.APIConfig.BRAIN_API_MODEL,
             api_base_url=config.APIConfig.BRAIN_API_BASE_URL,
-            role="Brain"
+            role="Brain",
+            use_lora=ModelConfig.USE_LORA_FOR_BRAIN if hasattr(ModelConfig, 'USE_LORA_FOR_BRAIN') else False,
+            lora_adapter_path=ModelConfig.BRAIN_LORA_ADAPTER_PATH if hasattr(ModelConfig, 'BRAIN_LORA_ADAPTER_PATH') else None
         )
 
         self.guard_adapter = self._create_adapter(
@@ -291,13 +507,15 @@ class LLMEngine:
             api_key=config.APIConfig.GUARD_API_KEY,
             api_model=config.APIConfig.GUARD_API_MODEL,
             api_base_url=config.APIConfig.GUARD_API_BASE_URL,
-            role="Guard"
+            role="Guard",
+            use_lora=ModelConfig.USE_LORA_FOR_GUARD if hasattr(ModelConfig, 'USE_LORA_FOR_GUARD') else False,
+            lora_adapter_path=ModelConfig.GUARD_LORA_ADAPTER_PATH if hasattr(ModelConfig, 'GUARD_LORA_ADAPTER_PATH') else None
         )
 
         print("✅ 所有模型适配器初始化完成\n")
 
     def _init_gpu_lock(self) -> Optional[threading.Lock]:
-        """只有当有本地模型时才初始化GPU锁"""
+        """只有当有本地模型（Transformers）时才初始化GPU锁，vLLM 不需要锁"""
         has_local = any([
             config.APIConfig.AVATAR_BACKEND == ModelBackend.LOCAL,
             config.APIConfig.BRAIN_BACKEND == ModelBackend.LOCAL,
@@ -307,17 +525,19 @@ class LLMEngine:
 
     def _create_adapter(self, backend: ModelBackend, local_path: str,
                        api_key: str, api_model: str, api_base_url: str,
-                       role: str = "") -> ModelAdapter:
+                       role: str = "", use_lora: bool = False, lora_adapter_path: str = None) -> ModelAdapter:
         """
         工厂方法：根据配置创建对应的适配器
 
         Args:
-            backend: 后端类型（本地/OpenAI）
+            backend: 后端类型（本地/vLLM/OpenAI）
             local_path: 本地模型路径
             api_key: API密钥
             api_model: API模型名称
             api_base_url: API基础URL
             role: 模型角色（用于日志）
+            use_lora: 是否使用LoRA适配器
+            lora_adapter_path: LoRA适配器路径
 
         Returns:
             ModelAdapter实例
@@ -325,8 +545,25 @@ class LLMEngine:
         role_prefix = f"[{role}] " if role else ""
 
         if backend == ModelBackend.LOCAL:
-            print(f"{role_prefix}使用本地模型: {local_path}")
-            return LocalModelAdapter(local_path, self.gpu_lock)
+            if use_lora and lora_adapter_path:
+                print(f"{role_prefix}使用本地模型(TRANSFORMERS) + LoRA适配器: {local_path} + {lora_adapter_path}")
+            else:
+                print(f"{role_prefix}使用本地模型(TRANSFORMERS): {local_path}")
+            return LocalModelAdapter(local_path, self.gpu_lock, lora_adapter_path, use_lora)
+
+        elif backend == ModelBackend.VLLM:
+            if use_lora and lora_adapter_path:
+                print(f"{role_prefix}使用 vLLM 引擎 + LoRA适配器: {local_path} + {lora_adapter_path}")
+            else:
+                print(f"{role_prefix}使用 vLLM 引擎: {local_path}")
+            return VLLMModelAdapter(
+                model_path=local_path,
+                lora_adapter_path=lora_adapter_path,
+                use_lora=use_lora,
+                max_model_len=ModelConfig.VLLM_MAX_MODEL_LEN,
+                gpu_memory_utilization=ModelConfig.VLLM_GPU_MEMORY_UTIL,
+                quantization=ModelConfig.VLLM_QUANTIZATION
+            )
 
         elif backend == ModelBackend.OPENAI:
             print(f"{role_prefix}使用OpenAI API: {api_model}")
@@ -376,6 +613,8 @@ class LLMEngine:
             return False, ""
 
         # Step 2: 小模型进一步确认 (防止"我笑死了"被误判)
+        import time
+        guard_start = time.time()
         messages = [
             {"role": "system", "content": "你是一个安全审核员。判断用户输入是否有自杀风险。只回答'是'或'否'。"},
             {"role": "user", "content": text}
@@ -386,6 +625,7 @@ class LLMEngine:
             max_tokens=10,
             temperature=0.1
         )
+        print(f"⏱️ [Guard] fast_risk_check 耗时: {int((time.time()-guard_start)*1000)}ms")
 
         # 简单起见，直接找关键词
         has_risk = "是" in response or "Yes" in response
@@ -652,3 +892,4 @@ class LLMEngine:
         
         # 全部失败，返回空字典
         return {}
+
