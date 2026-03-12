@@ -38,10 +38,18 @@ print("✅ 数据库表初始化完成")
 # =============================================================================
 # FastAPI应用初始化
 # =============================================================================
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app):
+    threading.Thread(target=get_shared_hazel_instance, daemon=True).start()
+    yield
+
 app = FastAPI(
     title="Hazel AI API",
     description="心理健康评估系统 - 核心API服务",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # 配置CORS（允许前端跨域访问）
